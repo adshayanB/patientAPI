@@ -39,22 +39,29 @@ def db_drop():
 @app.cli.command('dbSeed')
 def db_seed():
     hashed_password=generate_password_hash('password', method='sha256')
-    testUser=Admin(name='Dr.AdminUser',
+    testUser=Doctor(name='Dr.AdminUser',
                              password=hashed_password,
                              public_id=str(uuid.uuid4()),
                              email='doctor@doctor.com',
-                             admin=True)
+                             admin=True,
+                             clinician=True,
+                             confirmedEmail=True,
+                             confirmedOn=None
+                             )
     db.session.add(testUser)
     db.session.commit()
     print('Seeded')
 
-class Admin(db.Model):
+class Doctor(db.Model):
     id=Column(Integer, primary_key=True)
     public_id=Column(String(50), unique=True)
     name=Column(String(50))
     password=Column(String(80))
     email=Column(String(50), unique=True)
     admin=Column(Boolean)
+    clinician=Column(Boolean)
+    confirmedEmail=Column(Boolean)
+    confirmedOn=Column(String())
 class User(db.Model):
     id=Column(Integer, primary_key=True)
     public_id=Column(String(50), unique=True)
@@ -67,25 +74,85 @@ class User(db.Model):
     confirmedEmail=Column(Boolean)
     confirmedOn=Column(String())
     admin=db.Column(Boolean)
+
+
 def token_required(f):
     @wraps(f)
     def decorated(*args,**kwargs):
         token=None
-        if 'Bearer' in request.headers:
-            token=request.headers['Bearer']
+        if 'x-access-tokens' in request.headers:
+            token=request.headers['x-access-tokens']
         if not token:
             return jsonify(message='Token is missing'),401
         try:
             data=jwt.decode(token, app.config['SECRET_KEY'])
-            current_user=User.query.filter_by(public_id=data['public_id']).first()
+            current_user=Doctor.query.filter_by(public_id=data['public_id']).first()
         except:
             return jsonify(message='Token is invalid'),401
 
         return f(current_user, *args, **kwargs)
     return decorated
 
+@app.route('/doctor/login')
+def login():
+    auth=request.authorization
+    if not auth or not auth.username or not auth.password:
+        return make_response('Could not verify',401,{'WWW-Authenticate': 'Basic realm="Login required"'})
+
+    user=Doctor.query.filter_by(email=auth.username).first()
+
+    if not user:
+        return make_response('Could not verify',401,{'WWW-Authenticate': 'Basic realm="Login required"'})
+    if check_password_hash( user.password,auth.password):
+        token=jwt.encode({'public_id': user.public_id,'exp':datetime.datetime.utcnow()+datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
+        return jsonify(token=token.decode('UTF-8'))#
+    else:
+        return make_response('Could not verify',401,{'WWW-Authenticate': 'Basic realm="Login required"'})
+
+@app.route('/doctor', methods=['POST'])
+@token_required
+def create_doctor(current_user):
+
+    if not current_user.admin:
+        return jsonify(message='Credentials invalid')
+
+    data=request.get_json()
+    email=data['email']
+    test=User.query.filter_by(email=email).first()
+
+    if test:
+        return jsonify(message="User already exists"),409
+    else:
+             hashed_password=generate_password_hash(data['password'], method='sha256')
+             new_doc=Doctor(public_id=str(uuid.uuid4()),
+                             name=data['name'],
+                             email=data['email'],
+                             password=hashed_password,
+                             admin=False,
+                             confirmedEmail=False,
+                             confirmedOn=None)
+
+    email = data['email']
+    token = s.dumps(email, salt='email-confirm')
+
+    msg = Message('Confirm Email', sender='bookingapp@booking.com', recipients=[email])
+
+    link = url_for('confirm_email', token=token, _external=True)
+
+    msg.body = 'Your link is {}'.format(link)
+
+    mail.send(msg)
+    db.session.add(new_doc)
+    db.session.commit()
+    return jsonify(message='Doctor has been added'),201
+
+
 @app.route('/user', methods =['POST'])
-def create_user():
+@token_required
+def create_user(current_user):
+
+        if not current_user.clinician:
+            return jsonify(message="You don't have valid credentials")
         data=request.get_json()
         email=data['email']
         test=User.query.filter_by(email=email).first()
@@ -126,6 +193,7 @@ def confirm_email(token):
     except SignatureExpired:
         return jsonify(message='Invalid token')
     user=User.query.filter_by(email=email).first()
+    user=Doctor.query.filter_by(email=email).first()
     if user.confirmedEmail:
         return jsonify(message='Email already confirmed')
     else:
@@ -134,14 +202,6 @@ def confirm_email(token):
         db.session.add(user)
         db.session.commit()
         return jsonify(message='Email confirmed')
-
-
-
-
-
-
-
-
 
 
 
