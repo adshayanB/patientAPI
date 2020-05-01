@@ -129,6 +129,7 @@ def create_doctor(current_user):
                              email=data['email'],
                              password=hashed_password,
                              admin=False,
+                             clinician=True,
                              confirmedEmail=False,
                              confirmedOn=None)
 
@@ -145,6 +146,74 @@ def create_doctor(current_user):
     db.session.add(new_doc)
     db.session.commit()
     return jsonify(message='Doctor has been added'),201
+
+@app.route('/doctor', methods=['GET'])
+@token_required
+def get_all_users(current_user):
+    if not current_user.admin:
+        return jsonify(message="You don't have valid credentials")
+    doctors=Doctor.query.all()
+    output=[]
+    for doctor in doctors:
+        doctor_data={}
+        doctor_data['public_id']=doctor.public_id
+        doctor_data['name']=doctor.name
+        doctor_data['password']=doctor.password
+        doctor_data['email']=doctor.email
+        doctor_data['admin']=doctor.admin
+        doctor_data['clinician']=doctor.clinician
+        doctor_data['confirmedEmail']=doctor.confirmedEmail
+        doctor_data['confirmedOn']=doctor.confirmedOn
+        output.append(doctor_data)
+
+    return jsonify(doctors=output)
+
+@app.route('/doctor/<public_id>', methods=['GET'])
+@token_required
+def get_doctor(current_user,public_id):
+    if not current_user.admin:
+        return jsonify(message='You do not have valid credentials')
+    doctor=Doctor.query.filter_by(public_id=public_id).first()
+    if doctor:
+        doctor_data={}
+        doctor_data['public_id']=doctor.public_id
+        doctor_data['name']=doctor.name
+        doctor_data['password']=doctor.password
+        doctor_data['email']=doctor.email
+        doctor_data['admin']=doctor.admin
+        doctor_data['clinician']=doctor.clinician
+        doctor_data['confirmedEmail']=doctor.confirmedEmail
+        doctor_data['confirmedOn']=doctor.confirmedOn
+
+        return jsonify(doctor=doctor_data)
+    else:
+        return jsonify(message="Doctor does not exist")
+
+@app.route('/doctor/<public_id>', methods=['PUT'])
+@token_required
+def upgrade_to_admin (current_user, public_id):
+    if not current_user.admin:
+        return jsonify(message="You do not have the valid credentials")
+    else:
+         doctor=Doctor.query.filter_by(public_id=public_id).first()
+         doctor.admin=True
+         db.session.commit()
+         return jsonify(message="Doctor given admin credentials")
+
+
+@app.route('/doctor/<public_id>', methods=['DELETE'])
+@token_required
+def delete_doctor(current_user,public_id):
+    if not current_user.admin:
+        return jsonify(message="You don't have valid credentials")
+    else:
+        doc=Doctor.query.filter_by(public_id=public_id).first()
+        if doc:
+            db.session.delete(doc)
+            db.session.commit()
+            return jsonify(message="Doctor deleted")
+        else:
+            return jsonify(message="User not found")
 
 
 @app.route('/user', methods =['POST'])
